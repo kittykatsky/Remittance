@@ -1,0 +1,22 @@
+{
+  "name": "remittance",
+  "version": "1.0.0",
+  "description": "remitance task for b9lab",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kittykatsky/Remittance.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/kittykatsky/Remittance/issues"
+  },
+  "homepage": "https://github.com/kittykatsky/Remittance#readme",
+  "dependencies": {
+    "truffle": "^5.1.42"
+  }
+}
