@@ -27,7 +27,7 @@ contract Remittance is Ownable {
     {
         converter = _converter;
         recipient = _recipient;
-        bytes32 puzzle = keccak256(abi.encodePacked(puzzleConverter, puzzleRecipient));
+        bytes32 puzzle = generatePuzzle(puzzleConverter, puzzleRecipient);
         balance[puzzle][converter] = msg.value; 
         state = State.Created;
     }
