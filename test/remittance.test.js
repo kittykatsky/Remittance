@@ -84,5 +84,16 @@ contract('Remittance', function(accounts) {
             return assert.strictEqual(converterBalance.sub(checkBalance).toString(), '5000');
         });
 
+        it("Should be possible for Alice to verify that the transaction went through", async function () {
+
+            await Rem.releaseFunds(
+                cPuzzle, rPuzzle, {from: converter}
+            ).then(
+                tx => logFR = tx.logs[0]
+            );
+
+            assert(logFR.args.sender, converter);
+            assert(logFR.args.amount, 5000);
+        });
     });
 });
