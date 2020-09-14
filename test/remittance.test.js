@@ -29,7 +29,7 @@ contract('Remittance', function(accounts) {
     let rPuzzle = web3.utils.asciiToHex(process.env.PUZZLE_RECIPIENT);
 
     beforeEach('Setup new Remittance before each test', async function () {
-        Rem = await Remittance.new(converter, recipient, cPuzzle, rPuzzle, {from: aliceAccount, value:5000});
+        Rem = await Remittance.new(converter, cPuzzle, rPuzzle, 10, false, {from: aliceAccount, value:5000});
     });
 
     describe('deployment', function () {
@@ -42,6 +42,46 @@ contract('Remittance', function(accounts) {
             puzzle = await Rem.generatePuzzle(cPuzzle, rPuzzle);
             balance = await Rem.balance(puzzle, converter);
             return assert.strictEqual(balance.toString(), '5000');
+        });
+    });
+
+    describe('Pausable', function () {
+
+        it("Should be owned by the deployer", async function () {
+            return expect(await Rem.getOwner()).to.equal(aliceAccount)
+        });
+
+        it("Should not be possible to withdraw when paused", async function () {
+            await Rem.pause({from: aliceAccount})
+            return expect(Rem.releaseFunds(cPuzzle, rPuzzle, {from: converter})).to.be.rejected;
+        });
+
+        it("Should be possible to kill a paused contract", async function () {
+            await Rem.pause({from: aliceAccount});
+            const tx = await Rem.kill({from: aliceAccount});
+            return assert.strictEqual(tx.receipt.status, true);
+        });
+
+        it("Should no be possible to run a killed contract", async function () {
+            await Rem.pause({from: aliceAccount});
+            const tx = await Rem.kill({from: aliceAccount});
+            return expect(Rem.releaseFunds(cPuzzle, rPuzzle, {from: converter})).to.be.rejected;
+        });
+
+        it("Should not be possible to unpause a killed contract", async function () {
+            await Rem.pause({from: aliceAccount});
+            await Rem.kill({from: aliceAccount});
+            return expect(Rem.resume({from: aliceAccount})).to.be.rejected;
+        });
+
+        it("Should not be possible to empty a live contract", async function () {
+            return expect(Rem.emptyAccount(aliceAccount, {from: aliceAccount})).to.be.rejected;
+        });
+
+        it("Should be possible to empty a killed contract", async function () {
+            await Rem.pause({from: aliceAccount});
+            await Rem.kill({from: aliceAccount});
+            return expect(Rem.emptyAccount(aliceAccount, {from: aliceAccount})).to.be.fulfilled;
         });
     });
 
@@ -93,7 +133,19 @@ contract('Remittance', function(accounts) {
             );
 
             assert(logFR.args.sender, converter);
-            assert(logFR.args.amount, 5000);
+            assert(logFR.args.amount.toString(), '5000');
+        });
+    });
+
+    describe('deadline', function (){
+        it("Should not be possible to withdraw after the deadline has passed", async function () {
+
+            //how to wait?
+            return expect(Rem.releaseFunds(cPuzzle, rPuzzle, {from: converter})).to.be.rejected;
+        });
+
+        it("Should be possible to withdraw within the given deadline", async function () {
+            return expect(Rem.releaseFunds(cPuzzle, rPuzzle, {from: converter})).to.be.fulfilled;
         });
     });
 });
