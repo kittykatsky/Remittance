@@ -1,12 +1,16 @@
 pragma solidity ^0.6.0;
 
-import "./Ownable.sol";
+import "./Pausable.sol";
+import "@openzeppelin/contracts/math/SafeMath.sol";
 
 /// @author Kat
-/// @title A contract for splitting ethereum 
-contract Remittance is Ownable {
+/// @title A contract for transfering ethereum through an intermediary 
+contract Remittance is Pausable {
+
+    using SafeMath for uint;
+
     address payable public converter;
-    address payable public recipient;
+    uint public remittanceDeadLine; 
 
     mapping(bytes32 => mapping(address => uint)) public balance;
 
@@ -14,22 +18,29 @@ contract Remittance is Ownable {
 
     State public state;
 
-    event logFundsReleased(address indexed sender, uint amount);
+    event logNewRemittance(address indexed sender, address indexed converter, uint amount, uint deadLine);
+    event logFundsReleased(address indexed sender, uint amount, uint releasedAt);
 
+
+    //constructor(bool pauseState) Pausable(pauseState) public {}
     constructor (
         address payable _converter, 
-        address payable _recipient, 
         bytes32 puzzleConverter, 
-        bytes32 puzzleRecipient
+        bytes32 puzzleRecipient,
+        uint _deadline,
+        bool pauseState
     )
+    Pausable(pauseState)
         public
         payable
     {
+        require(_deadline <= 7200, 'Deadline cant be more than two hours into future');
         converter = _converter;
-        recipient = _recipient;
         bytes32 puzzle = generatePuzzle(puzzleConverter, puzzleRecipient);
         balance[puzzle][converter] = msg.value; 
+        remittanceDeadLine = block.timestamp + _deadline;
         state = State.Created;
+        emit logNewRemittance(msg.sender, converter, msg.value, remittanceDeadLine);
     }
     
     /// @dev Generates the puzzle for the remitance 
@@ -48,8 +59,10 @@ contract Remittance is Ownable {
 	/// @return true if succesfull
     function releaseFunds(bytes32 _puzzleConverter, bytes32 _puzzleRecipient) 
         external 
+        whenRunning
         returns (bool)
     {
+        require(block.timestamp <= remittanceDeadLine, 'Remittance has lapsed');
         require(msg.sender == converter, 'only converter can release funds');
         require(state == State.Created, 'Remittance not available');
 
@@ -57,7 +70,7 @@ contract Remittance is Ownable {
         require(amount > 0, 'No funds available');
 
         state = State.Released;
-        emit logFundsReleased(msg.sender, amount);
+        emit logFundsReleased(msg.sender, amount, block.timestamp);
         (bool success, ) = msg.sender.call{value: amount}("");
         require(success, 'Transfer failed!');
         return true;
