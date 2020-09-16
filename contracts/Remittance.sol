@@ -11,18 +11,17 @@ contract Remittance is Pausable {
 
     address payable public converter;
     uint public remittanceDeadLine; 
+    uint16 deadLineLimit = 7200;
 
+    // remittance balance mapping, maps a given puzzle to a second mapping
+    // linking an address (the converter) to an amount (the remittance)
     mapping(bytes32 => mapping(address => uint)) public balance;
 
-    enum State {Created, Released}
-
-    State public state;
 
     event logNewRemittance(address indexed sender, address indexed converter, uint amount, uint deadLine);
     event logFundsReleased(address indexed sender, uint amount, uint releasedAt);
 
 
-    //constructor(bool pauseState) Pausable(pauseState) public {}
     constructor (
         address payable _converter, 
         bytes32 puzzleConverter, 
@@ -30,31 +29,32 @@ contract Remittance is Pausable {
         uint _deadline,
         bool pauseState
     )
-    Pausable(pauseState)
+        Pausable(pauseState)
         public
         payable
     {
-        require(_deadline <= 7200, 'Deadline cant be more than two hours into future');
+        require(_deadline <= deadLineLimit, 'Deadline cant be more than two hours into future');
         converter = _converter;
         bytes32 puzzle = generatePuzzle(puzzleConverter, puzzleRecipient);
         balance[puzzle][converter] = msg.value; 
         remittanceDeadLine = block.timestamp + _deadline;
-        state = State.Created;
         emit logNewRemittance(msg.sender, converter, msg.value, remittanceDeadLine);
     }
-    
-    /// @dev Generates the puzzle for the remitance 
+
+    /// Generate a unique puzzle for this contract
+    /// @param _puzzleConverter puzzle provided by converter
+    /// @param _puzzleRecipient puzzle provided by recipient
     function generatePuzzle(bytes32 _puzzleConverter, bytes32 _puzzleRecipient)
         public
         view
         returns (bytes32 puzzle)
     {
-        puzzle = keccak256(abi.encodePacked(uint(_puzzleConverter), uint(_puzzleRecipient)));
+        puzzle = keccak256(abi.encode(_puzzleConverter, _puzzleRecipient, address(this)));
     }
         
     /// Release the remittance
-    /// @param _puzzleConverter puzzle
-    /// @param _puzzleRecipient puzzle
+    /// @param _puzzleConverter puzzle provided by converter
+    /// @param _puzzleRecipient puzzle provided by recipient
     /// @dev allows payee to withdraw their alloted funds
 	/// @return true if succesfull
     function releaseFunds(bytes32 _puzzleConverter, bytes32 _puzzleRecipient) 
@@ -64,12 +64,10 @@ contract Remittance is Pausable {
     {
         require(block.timestamp <= remittanceDeadLine, 'Remittance has lapsed');
         require(msg.sender == converter, 'only converter can release funds');
-        require(state == State.Created, 'Remittance not available');
 
         uint amount = balance[generatePuzzle(_puzzleConverter, _puzzleRecipient)][msg.sender];
         require(amount > 0, 'No funds available');
 
-        state = State.Released;
         emit logFundsReleased(msg.sender, amount, block.timestamp);
         (bool success, ) = msg.sender.call{value: amount}("");
         require(success, 'Transfer failed!');
