@@ -43,6 +43,10 @@ contract('Remittance', function(accounts) {
             balance = await Rem.balance(puzzle, converter);
             return assert.strictEqual(balance.toString(), '5000');
         });
+        it("Should not be possible to generate the same secret from two seperte contracts", async function () {
+            Rem2 = await Remittance.new(converter, cPuzzle, rPuzzle, 10, false, {from: aliceAccount, value:5000});
+            assert.notEqual(Rem.generatePuzzle(cPuzzle, rPuzzle), Rem2.generatePuzzle(cPuzzle, rPuzzle))
+        })
     });
 
     describe('Pausable', function () {
