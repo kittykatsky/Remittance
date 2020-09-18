@@ -145,10 +145,19 @@ contract('Remittance', function(accounts) {
 
     describe('deadline', function (){
         it("Should not be possible to withdraw after the deadline has passed", async function () {
-
-            this.timeout(30000);
             //how to wait?
             return expect(Rem.releaseFunds(cPuzzle, rPuzzle, {from: converter})).to.be.rejected;
+        });
+
+        it("Should be possible for the owner to reclaim the deposited ehter after \
+             the deadline has expired", async function () {
+            return expect(Rem.reclaimFunds(cPuzzle, rPuzzle, {from: aliceAccount})).to.be.fulfilled;
+        });
+
+        it("Should not be possible for the owner to reclaim the deposited ehter before \
+             the deadline has expired", async function () {
+            //how to wait?
+            return expect(Rem.reclaimFunds(cPuzzle, rPuzzle, {from: aliceAccount})).to.be.rejected;
         });
 
         it("Should be possible to withdraw within the given deadline", async function () {
