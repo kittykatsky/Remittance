@@ -11,32 +11,38 @@ contract Remittance is Pausable {
 
     address payable public converter;
     uint public remittanceDeadLine; 
-    uint16 deadLineLimit = 7200;
+    uint16 constant deadLineLimit = 7200;
 
     // remittance balance mapping, maps a given puzzle to a second mapping
     // linking an address (the converter) to an amount (the remittance)
-    mapping(bytes32 => mapping(address => uint)) public balance;
+    mapping(bytes32 => mapping(address => uint)) public balances;
 
 
     event logNewRemittance(address indexed sender, address indexed converter, uint amount, uint deadLine);
     event logFundsReleased(address indexed sender, uint amount, uint releasedAt);
 
 
-    constructor (
+    constructor (bool pauseState) Pausable(pauseState) public {}
+
+    /// Generates a remittance
+    /// @param _converter converter address
+    /// @param _puzzleConverter puzzle provided by converter
+    /// @param _puzzleRecipient puzzle provided by recipient
+    /// @param _deadline deadline set for the remittance
+    function createRemittance(
         address payable _converter, 
-        bytes32 puzzleConverter, 
-        bytes32 puzzleRecipient,
-        uint _deadline,
-        bool pauseState
+        bytes32 _puzzleConverter, 
+        bytes32 _puzzleRecipient,
+        uint _deadline
     )
-        Pausable(pauseState)
         public
         payable
+        whenRunning
     {
         require(_deadline <= deadLineLimit, 'Deadline cant be more than two hours into future');
         converter = _converter;
-        bytes32 puzzle = generatePuzzle(puzzleConverter, puzzleRecipient);
-        balance[puzzle][converter] = msg.value; 
+        bytes32 puzzle = generatePuzzle(_puzzleConverter, _puzzleRecipient);
+        balances[puzzle][converter] = msg.value; 
         remittanceDeadLine = block.timestamp + _deadline;
         emit logNewRemittance(msg.sender, converter, msg.value, remittanceDeadLine);
     }
@@ -65,7 +71,7 @@ contract Remittance is Pausable {
         require(block.timestamp <= remittanceDeadLine, 'Remittance has lapsed');
         require(msg.sender == converter, 'only converter can release funds');
 
-        uint amount = balance[generatePuzzle(_puzzleConverter, _puzzleRecipient)][msg.sender];
+        uint amount = balances[generatePuzzle(_puzzleConverter, _puzzleRecipient)][msg.sender];
         require(amount > 0, 'No funds available');
 
         emit logFundsReleased(msg.sender, amount, block.timestamp);
@@ -74,4 +80,17 @@ contract Remittance is Pausable {
         return true;
     } 
 
+    function reclaimFunds(bytes32 _puzzleConverter, bytes32 _puzzleRecipient)
+        public
+        returns (bool success)
+    {
+        require(msg.sender == getOwner(), 'only Owner can reclaim');
+        require(remittanceDeadLine < block.timestamp, 'Remittance not expired');
+        uint amount = balances[generatePuzzle(_puzzleConverter, _puzzleRecipient)][converter];
+        require(amount > 0, 'No ether in remittance');
+
+        (success, ) = msg.sender.call{value: amount}("");
+        require(success, 'Transfer failed!');
+        return true;
+    }
 }
