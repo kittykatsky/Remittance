@@ -29,7 +29,8 @@ contract('Remittance', function(accounts) {
     let rPuzzle = web3.utils.asciiToHex(process.env.PUZZLE_RECIPIENT);
 
     beforeEach('Setup new Remittance before each test', async function () {
-        Rem = await Remittance.new(converter, cPuzzle, rPuzzle, 10, false, {from: aliceAccount, value:5000});
+        Rem = await Remittance.new(false, {from: aliceAccount});
+        await Rem.createRemittance(converter, cPuzzle, rPuzzle, 10, {from: aliceAccount, value:5000});
     });
 
     describe('deployment', function () {
@@ -40,11 +41,12 @@ contract('Remittance', function(accounts) {
 
         it("Should have a puzzle associate with an account and an amount of eth", async function () {
             puzzle = await Rem.generatePuzzle(cPuzzle, rPuzzle);
-            balance = await Rem.balance(puzzle, converter);
+            balance = await Rem.balances(puzzle, converter);
             return assert.strictEqual(balance.toString(), '5000');
         });
         it("Should not be possible to generate the same secret from two seperte contracts", async function () {
-            Rem2 = await Remittance.new(converter, cPuzzle, rPuzzle, 10, false, {from: aliceAccount, value:5000});
+            Rem2 = await Remittance.new(false, {from: aliceAccount});
+            await Rem2.createRemittance(converter, cPuzzle, rPuzzle, 10, {from: aliceAccount, value:5000});
             assert.notEqual(Rem.generatePuzzle(cPuzzle, rPuzzle), Rem2.generatePuzzle(cPuzzle, rPuzzle))
         })
     });
@@ -144,6 +146,7 @@ contract('Remittance', function(accounts) {
     describe('deadline', function (){
         it("Should not be possible to withdraw after the deadline has passed", async function () {
 
+            this.timeout(30000);
             //how to wait?
             return expect(Rem.releaseFunds(cPuzzle, rPuzzle, {from: converter})).to.be.rejected;
         });
