@@ -39,11 +39,20 @@ contract('Remittance', function(accounts) {
             return expect(await Rem.getOwner()).to.equal(aliceAccount)
         });
 
-        it("Should have a puzzle associate with an account and an amount of eth", async function () {
+        it("Should have a puzzle associate with a struct holding sender, reciever, \
+        amount and deadline", async function () {
             puzzle = await Rem.generatePuzzle(cPuzzle, rPuzzle);
-            balance = await Rem.balances(puzzle, converter);
-            return assert.strictEqual(balance.toString(), '5000');
+            remStorage = await Rem.balances(puzzle);
+
+            const latestBlock = await web3.eth.getBlockNumber()
+            const block = await web3.eth.getBlock(latestBlock)
+            const setDeadline = block.timestamp + 10
+            assert.strictEqual(remStorage.from, aliceAccount);
+            assert.strictEqual(remStorage.to, converter);
+            assert.strictEqual(remStorage.deadline.toString(), setDeadline.toString());
+            return assert.strictEqual(remStorage.amount.toString(), '5000');
         });
+
         it("Should not be possible to generate the same secret from two seperte contracts", async function () {
             Rem2 = await Remittance.new(false, {from: aliceAccount});
             await Rem2.createRemittance(converter, cPuzzle, rPuzzle, 10, {from: aliceAccount, value:5000});
@@ -70,7 +79,6 @@ contract('Remittance', function(accounts) {
 
         it("Should no be possible to run a killed contract", async function () {
             await Rem.pause({from: aliceAccount});
-            const tx = await Rem.kill({from: aliceAccount});
             return expect(Rem.releaseFunds(cPuzzle, rPuzzle, {from: converter})).to.be.rejected;
         });
 
@@ -141,22 +149,53 @@ contract('Remittance', function(accounts) {
             assert(logFR.args.sender, converter);
             assert(logFR.args.amount.toString(), '5000');
         });
+
+        it("It should be possible to create several remittances on the same contract", async function () {
+            const newPiece = web3.utils.asciiToHex('superSecretPuzzlePiece');
+            return expect(Rem2.createRemittance(
+                converter,
+                newPiece,
+                rPuzzle,
+                10,
+                {from: aliceAccount, value:5000}
+            )).to.be.fulfilled;
+        });
+
+        it("It should not be possible to create a remittance with the same puzzle", async function () {
+            return expect(Rem2.createRemittance(
+                converter,
+                cPuzzle,
+                rPuzzle,
+                10,
+                {from: aliceAccount, value:5000}
+            )).to.be.rejected;
+        });
+
+        it("It should not have a balance after withdrawal", async function () {
+            await Rem.releaseFunds(cPuzzle, rPuzzle, {from: converter});
+            remStorage = await Rem.balances(puzzle);
+            return assert.strictEqual(remStorage.amount.toString(), '0');
+        });
     });
 
     describe('deadline', function (){
+        function timeout(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
         it("Should not be possible to withdraw after the deadline has passed", async function () {
-            //how to wait?
+            await timeout(11000);
             return expect(Rem.releaseFunds(cPuzzle, rPuzzle, {from: converter})).to.be.rejected;
         });
 
         it("Should be possible for the owner to reclaim the deposited ehter after \
-             the deadline has expired", async function () {
+        the deadline has expired", async function () {
+            await timeout(11000);
             return expect(Rem.reclaimFunds(cPuzzle, rPuzzle, {from: aliceAccount})).to.be.fulfilled;
         });
 
         it("Should not be possible for the owner to reclaim the deposited ehter before \
-             the deadline has expired", async function () {
-            //how to wait?
+        the deadline has expired", async function () {
             return expect(Rem.reclaimFunds(cPuzzle, rPuzzle, {from: aliceAccount})).to.be.rejected;
         });
 
