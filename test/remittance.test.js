@@ -27,6 +27,7 @@ contract('Remittance', function(accounts) {
 
     let converter = carolAccount;
     let recipient = bobAccount;
+    let remFee = 2000;
     let rPuzzle = web3.utils.fromAscii(process.env.PUZZLE_RECIPIENT);
     let rPuzzleSec = web3.utils.fromAscii(process.env.PUZZLE_RECIPIENT_SECONDARY);
 
@@ -34,7 +35,7 @@ contract('Remittance', function(accounts) {
     beforeEach('Setup new Remittance before each test', async function () {
         //let snapshot = await timeMachine.takeSnapshot();
         //snapshotId = snapshot['result'];
-        Rem = await Remittance.new(false, {from: aliceAccount});
+        Rem = await Remittance.new(false, remFee, {from: aliceAccount});
         puzzle = await Rem.generatePuzzle(converter, rPuzzle, {from: aliceAccount})
         await Rem.createRemittance(converter, puzzle, 10, {from: aliceAccount, value:5000});
     });
@@ -58,11 +59,11 @@ contract('Remittance', function(accounts) {
             const setDeadline = block.timestamp + 10
             assert.strictEqual(remittances.from, aliceAccount);
             assert.strictEqual(remittances.deadline.toString(), setDeadline.toString());
-            return assert.strictEqual(remittances.amount.toString(), '5000');
+            return assert.strictEqual(remittances.amount.toString(), '3000');
         });
 
         it("Should not be possible to generate the same secret from two seperte contracts", async function () {
-            Rem2 = await Remittance.new(false, {from: aliceAccount});
+            Rem2 = await Remittance.new(false, remFee, {from: aliceAccount});
             assert.notEqual(
                 Rem.generatePuzzle(converter, rPuzzle, {from: aliceAccount}),
                 Rem2.generatePuzzle(converter, rPuzzle, {from: aliceAccount})
@@ -145,7 +146,7 @@ contract('Remittance', function(accounts) {
             const checkBalance = new BN(originalBalance).sub(gasCost);
             const converterBalance = new BN(await web3.eth.getBalance(converter));
 
-            return assert.strictEqual(converterBalance.sub(checkBalance).toString(), '5000');
+            return assert.strictEqual(converterBalance.sub(checkBalance).toString(), '3000');
         });
 
         it("Should be possible for Alice to verify that the transaction went through", async function () {
@@ -155,7 +156,7 @@ contract('Remittance', function(accounts) {
             );
 
             truffleAssert.eventEmitted(tx, 'logFundsReleased', (ev) => {
-                return ev.sender === converter && ev.amount.toString() === '5000'
+                return ev.sender === converter && ev.amount.toString() === '3000'
             });
         });
 
@@ -167,12 +168,12 @@ contract('Remittance', function(accounts) {
             );
 
             truffleAssert.eventEmitted(tx, 'logFundsReclaimed', (ev) => {
-                return ev.sender === aliceAccount && ev.amount.toString() === '5000'
+                return ev.sender === aliceAccount && ev.amount.toString() === '3000'
             });
         });
 
         it("Should be possible to verify that a new remittance has been created", async function () {
-            Rem2 = await Remittance.new(false, {from: aliceAccount});
+            Rem2 = await Remittance.new(false, remFee, {from: aliceAccount});
 
             tx = await Rem2.createRemittance(converter, puzzle, 10, {from: aliceAccount, value:5000});
 
@@ -181,29 +182,48 @@ contract('Remittance', function(accounts) {
             });
         });
 
-        it("It should be possible to create several remittances on the same contract", async function () {
+        it("Should be possible to create several remittances on the same contract", async function () {
             const newPuzzle = await Rem.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
             return expect(Rem.createRemittance(
                 converter,
                 newPuzzle,
                 10,
-                {from: aliceAccount, value:5000}
+                {from: aliceAccount, value:3000}
             )).to.be.fulfilled;
         });
 
-        it("It should not be possible to create a remittance with the same puzzle", async function () {
+        it("Should not be possible to create a remittance with the same puzzle", async function () {
             return expect(Rem.createRemittance(
                 converter,
                 puzzle,
                 10,
-                {from: aliceAccount, value:5000}
+                {from: aliceAccount, value:3000}
             )).to.be.rejected;
         });
 
-        it("It should not have a balance after withdrawal", async function () {
+        it("Should not have a balance after withdrawal", async function () {
             await Rem.releaseFunds(rPuzzle, {from: converter});
             remittances = await Rem.remittances(puzzle);
             return assert.strictEqual(remittances.amount.toString(), '0');
+        });
+
+        it("Should be possible for the owner to withdraw any collected fees", async function () {
+            puzzleSec = await Rem.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
+            await Rem.createRemittance(converter, puzzleSec, 10, {from: aliceAccount, value:5000});
+
+            let aliceBalance = new BN(await web3.eth.getBalance(aliceAccount));
+            const expectedBalance = aliceBalance.add(new BN(4000));
+
+            const trx = await Rem.withdrawFees({from: aliceAccount});
+            const trxTx = await web3.eth.getTransaction(trx.tx);
+
+            let gasUsed = new BN(trx.receipt.gasUsed);
+            const gasPrice = new BN(trxTx.gasPrice);
+            const gasCost = gasPrice.mul(gasUsed);
+
+            aliceBalance = new BN(await web3.eth.getBalance(aliceAccount)).add(gasCost);
+
+            return assert.strictEqual(aliceBalance.toString(), expectedBalance.toString());
         });
     });
 
