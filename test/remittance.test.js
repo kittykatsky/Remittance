@@ -15,6 +15,7 @@ chai.use(chaiAsPromised);
 const expect = chai.expect;
 const truffleAssert = require('truffle-assertions');
 const Remittance = artifacts.require('Remittance');
+const timeMachine = require('ganache-time-traveler');
 
 require("dotenv").config({path: "./.env"});
 
@@ -31,9 +32,15 @@ contract('Remittance', function(accounts) {
 
 
     beforeEach('Setup new Remittance before each test', async function () {
+        //let snapshot = await timeMachine.takeSnapshot();
+        //snapshotId = snapshot['result'];
         Rem = await Remittance.new(false, {from: aliceAccount});
         puzzle = await Rem.generatePuzzle(converter, rPuzzle, {from: aliceAccount})
         await Rem.createRemittance(converter, puzzle, 10, {from: aliceAccount, value:5000});
+    });
+
+    afterEach(async() => {
+        //await timeMachine.revertToSnapshot(snapshotId);
     });
 
     describe('deployment', function () {
@@ -143,14 +150,13 @@ contract('Remittance', function(accounts) {
 
         it("Should be possible for Alice to verify that the transaction went through", async function () {
 
-            await Rem.releaseFunds(
+            let tx = await Rem.releaseFunds(
                 rPuzzle, {from: converter}
-            ).then(
-                tx => logFR = tx.logs[0]
             );
 
-            assert(logFR.args.sender, converter);
-            assert(logFR.args.amount.toString(), '5000');
+            truffleAssert.eventEmitted(tx, 'logFundsReleased', (ev) => {
+                return ev.sender === converter && ev.amount.toString() === '5000'
+            });
         });
 
         it("It should be possible to create several remittances on the same contract", async function () {
@@ -185,19 +191,29 @@ contract('Remittance', function(accounts) {
         }
 
         it("Should not be possible to withdraw after the deadline has passed", async function () {
-            await timeout(11000);
-            return expect(Rem.releaseFunds(rPuzzle, {from: converter})).to.be.rejected;
+            await timeMachine.advanceTimeAndBlock(11);
+            //return expect(Rem.releaseFunds(rPuzzle, {from: converter})).to.be.rejected;
+            return await truffleAssert.fails(
+                Rem.releaseFunds(rPuzzle, {from: converter}),
+                truffleAssert.ErrorType.REVERT,
+                "Remittance has lapsed"
+            );
         });
 
         it("Should be possible for the owner to reclaim the deposited ehter after \
         the deadline has expired", async function () {
-            await timeout(11000);
+            await timeMachine.advanceTimeAndBlock(11);
             return expect(Rem.reclaimFunds(converter, rPuzzle, {from: aliceAccount})).to.be.fulfilled;
         });
 
         it("Should not be possible for the owner to reclaim the deposited ehter before \
         the deadline has expired", async function () {
-            return expect(Rem.reclaimFunds(converter, rPuzzle, {from: aliceAccount})).to.be.rejected;
+            //return expect(Rem.reclaimFunds(converter, rPuzzle, {from: aliceAccount})).to.be.rejected;
+            return await truffleAssert.fails(
+                Rem.reclaimFunds(converter, rPuzzle, {from: aliceAccount}),
+                truffleAssert.ErrorType.REVERT,
+                "Remittance needs to expire"
+            );
         });
 
         it("Should be possible to withdraw within the given deadline", async function () {
