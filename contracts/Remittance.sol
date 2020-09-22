@@ -11,6 +11,8 @@ contract Remittance is Pausable {
 
     // Remittance deadlince cant be more than 2 hours into the future
     uint16 constant DEADLINE_LIMIT = 7200;
+    // Remittance fee
+    uint fee;
 
     // Struct to hold information about individual remittances
     struct remittanceStruct {
@@ -22,12 +24,14 @@ contract Remittance is Pausable {
     // Remittance balance mapping, maps a given puzzle to a second mapping
     // linking an address (the converter) to an amount (the remittance)
     mapping(bytes32 => remittanceStruct) public remittances;
+    // mapping that holds fees payed out to contract owner
+    mapping(address => uint) private fees;
 
     event logNewRemittance(address indexed sender, address indexed converter, uint amount, uint deadline);
     event logFundsReleased(address indexed sender, uint amount, uint releasedAt);
     event logFundsReclaimed(address indexed sender, uint amount, uint reclaimedAt);
 
-    constructor (bool _pauseState) Pausable(_pauseState) public {}
+    constructor (bool _pauseState, uint _fee) Pausable(_pauseState) public {fee = _fee;}
 
     /// Generates a remittance
     /// @param converter address of converter 
@@ -43,13 +47,14 @@ contract Remittance is Pausable {
         whenRunning
     {
         require(deadline <= DEADLINE_LIMIT, 'Deadline cant be more than two hours into future');
-        require(msg.value > 0, 'Cant create empty remittance');
+        require(msg.value > fee, 'deposited amount need to be larger than fee');
         require(remittances[puzzle].from == address(0x0), 'Secret already in use');
 
         remittances[puzzle].from = msg.sender;
-        remittances[puzzle].amount = msg.value;
+        remittances[puzzle].amount = msg.value.sub(fee);
         remittances[puzzle].deadline = block.timestamp + deadline; 
         emit logNewRemittance(msg.sender, converter, msg.value, deadline);
+        fees[getOwner()] = fees[getOwner()].add(fee);
     }
 
     /// Generate a unique puzzle for this contract
@@ -128,5 +133,19 @@ contract Remittance is Pausable {
         deadline = remittances[puzzle].deadline;
 
         return (amount, deadline, from);
+    }
+
+    /// Withdraw fees from created remittances
+    /// @dev allowd the owner to withdraw collected fees
+	/// @return success function succeeded 
+    function withdrawFees() public onlyOwner returns (bool success)
+    {
+        uint amount = fees[msg.sender];
+        require(amount > 0, 'No ether available');
+        fees[msg.sender] = 0;
+
+        (success, ) = msg.sender.call{value: amount}("");
+        require(success, 'Transfer failed!');
+        return true;
     }
 }
