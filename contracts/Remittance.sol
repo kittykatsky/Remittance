@@ -15,7 +15,6 @@ contract Remittance is Pausable {
     // Struct to hold information about individual remittances
     struct remittanceStruct {
         address payable from;
-        address payable to;
         uint amount;
         uint deadline;
     } 
@@ -82,6 +81,7 @@ contract Remittance is Pausable {
         require(amount > 0, 'Remittance is empty');
 
         remittances[puzzle].amount = 0;
+        remittances[puzzle].deadline = 0;
         emit logFundsReleased(msg.sender, amount, block.timestamp);
 
         (success, ) = msg.sender.call{value: amount}("");
@@ -101,9 +101,11 @@ contract Remittance is Pausable {
         bytes32 puzzle = generatePuzzle(converterAddress, puzzlePiece);
         (uint amount, uint deadline, address payable from) = retrieveRemInfo(puzzle);
         require(msg.sender == from, 'Only sender can reclaim funds');
+        require(amount > 0, 'Remittance is empty');
         require(block.timestamp >= deadline, 'Remittance needs to expire');
 
         remittances[puzzle].amount = 0;
+        remittances[puzzle].deadline = 0;
         emit logFundsReclaimed(msg.sender, amount, block.timestamp);
 
         (success, ) = msg.sender.call{value: amount}("");
