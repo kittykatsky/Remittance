@@ -159,6 +159,28 @@ contract('Remittance', function(accounts) {
             });
         });
 
+        it("Should be possible to verify that a remittance was reclaimed", async function () {
+
+            await timeMachine.advanceTimeAndBlock(11);
+            let tx = await Rem.reclaimFunds(
+                converter, rPuzzle, {from: aliceAccount}
+            );
+
+            truffleAssert.eventEmitted(tx, 'logFundsReclaimed', (ev) => {
+                return ev.sender === aliceAccount && ev.amount.toString() === '5000'
+            });
+        });
+
+        it("Should be possible to verify that a new remittance has been created", async function () {
+            Rem2 = await Remittance.new(false, {from: aliceAccount});
+
+            tx = await Rem2.createRemittance(converter, puzzle, 10, {from: aliceAccount, value:5000});
+
+            truffleAssert.eventEmitted(tx, 'logNewRemittance', (ev) => {
+                return ev.sender === aliceAccount && ev.converter === converter && ev.amount.toString() === '5000'
+            });
+        });
+
         it("It should be possible to create several remittances on the same contract", async function () {
             const newPuzzle = await Rem.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
             return expect(Rem.createRemittance(
