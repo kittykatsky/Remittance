@@ -8,7 +8,7 @@
  *
  * */
 
-const BN = web3.utils.BN;
+const { BN, fromAscii } = web3.utils;
 const chai = require('chai');
 var chaiAsPromised = require("chai-as-promised");
 chai.use(chaiAsPromised);
@@ -21,92 +21,115 @@ require("dotenv").config({path: "./.env"});
 
 contract('Remittance', function(accounts) {
 
-    let Rem;
+    let remittance;
     let puzzle;
+    let trx;
     const [aliceAccount, bobAccount, carolAccount] = accounts;
 
-    let converter = carolAccount;
-    let recipient = bobAccount;
-    let remFee = 2000;
-    let rPuzzle = web3.utils.fromAscii(process.env.PUZZLE_RECIPIENT);
-    let rPuzzleSec = web3.utils.fromAscii(process.env.PUZZLE_RECIPIENT_SECONDARY);
+    const converter = carolAccount;
+    const recipient = bobAccount;
+    const remFee = 2000;
+    const rPuzzle = fromAscii(process.env.PUZZLE_RECIPIENT);
+    const rPuzzleSec = fromAscii(process.env.PUZZLE_RECIPIENT_SECONDARY);
 
 
     beforeEach('Setup new Remittance before each test', async function () {
-        //let snapshot = await timeMachine.takeSnapshot();
-        //snapshotId = snapshot['result'];
-        Rem = await Remittance.new(false, remFee, {from: aliceAccount});
-        puzzle = await Rem.generatePuzzle(converter, rPuzzle, {from: aliceAccount})
-        await Rem.createRemittance(converter, puzzle, 10, {from: aliceAccount, value:5000});
+        let snapshot = await timeMachine.takeSnapshot();
+        snapshotId = snapshot['result'];
+        remittance = await Remittance.new(false, remFee, {from: aliceAccount});
+        puzzle = await remittance.generatePuzzle(converter, rPuzzle, {from: aliceAccount})
+        trx = await remittance.createRemittance(converter, puzzle, 10, {from: aliceAccount, value:5000});
     });
 
     afterEach(async() => {
-        //await timeMachine.revertToSnapshot(snapshotId);
+        await timeMachine.revertToSnapshot(snapshotId);
     });
 
     describe('deployment', function () {
 
         it("Should have the deployer as its owner and be in the created state", async function () {
-            return expect(await Rem.getOwner()).to.equal(aliceAccount)
+            return expect(await remittance.getOwner()).to.equal(aliceAccount)
         });
 
         it("Should have a puzzle associate with a struct holding sender, \
         amount and deadline", async function () {
-            remittances = await Rem.remittances(puzzle);
+            remittances = await remittance.remittances(puzzle);
 
-            const latestBlock = await web3.eth.getBlockNumber()
-            const block = await web3.eth.getBlock(latestBlock)
-            const setDeadline = block.timestamp + 10
+            const trxTx = await web3.eth.getTransaction(trx.tx);
+            const block = await web3.eth.getBlock(trxTx.blockNumber);
+            const setDeadline = block.timestamp + 10;
             assert.strictEqual(remittances.from, aliceAccount);
             assert.strictEqual(remittances.deadline.toString(), setDeadline.toString());
             return assert.strictEqual(remittances.amount.toString(), '3000');
         });
 
         it("Should not be possible to generate the same secret from two seperte contracts", async function () {
-            Rem2 = await Remittance.new(false, remFee, {from: aliceAccount});
+            const remittance2 = await Remittance.new(false, remFee, {from: aliceAccount});
             assert.notEqual(
-                Rem.generatePuzzle(converter, rPuzzle, {from: aliceAccount}),
-                Rem2.generatePuzzle(converter, rPuzzle, {from: aliceAccount})
+                await remittance.generatePuzzle(converter, rPuzzle, {from: aliceAccount}),
+                await remittance2.generatePuzzle(converter, rPuzzle, {from: aliceAccount})
             )
-        })
+        });
+
+        it("Should be possible to change owner", async function () {
+            await remittance.transferOwnership(bobAccount, {from: aliceAccount});
+            assert.strictEqual(bobAccount,
+                await remittance.getOwner({from: bobAccount})
+            );
+        });
+
+        it("Should be possible for the old owner to get back their fees when chaning owner", async function () {
+            const originalBalance= await web3.eth.getBalance(aliceAccount);
+            const trx = await remittance.transferOwnership(bobAccount, {from: aliceAccount});
+            const trxTx = await web3.eth.getTransaction(trx.tx);
+
+            const gasUsed = new BN(trx.receipt.gasUsed);
+            const gasPrice = new BN(trxTx.gasPrice);
+            const gasCost = gasPrice.mul(gasUsed);
+
+            const expectedBalance = new BN(originalBalance).sub(gasCost).add(new BN(remFee));
+            const actualBalance = new BN(await web3.eth.getBalance(aliceAccount));
+
+            assert.strictEqual(expectedBalance.toString(), actualBalance.toString());
+        });
     });
 
     describe('Pausable', function () {
 
         it("Should be owned by the deployer", async function () {
-            return expect(await Rem.getOwner()).to.equal(aliceAccount)
+            return expect(await remittance.getOwner()).to.equal(aliceAccount)
         });
 
         it("Should not be possible to withdraw when paused", async function () {
-            await Rem.pause({from: aliceAccount})
-            return expect(Rem.releaseFunds(puzzle, {from: converter})).to.be.rejected;
+            await remittance.pause({from: aliceAccount})
+            return expect(remittance.releaseFunds(puzzle, {from: converter})).to.be.rejected;
         });
 
         it("Should be possible to kill a paused contract", async function () {
-            await Rem.pause({from: aliceAccount});
-            const tx = await Rem.kill({from: aliceAccount});
+            await remittance.pause({from: aliceAccount});
+            const tx = await remittance.kill({from: aliceAccount});
             return assert.strictEqual(tx.receipt.status, true);
         });
 
         it("Should no be possible to run a killed contract", async function () {
-            await Rem.pause({from: aliceAccount});
-            return expect(Rem.releaseFunds(puzzle, {from: converter})).to.be.rejected;
+            await remittance.pause({from: aliceAccount});
+            return expect(remittance.releaseFunds(puzzle, {from: converter})).to.be.rejected;
         });
 
         it("Should not be possible to unpause a killed contract", async function () {
-            await Rem.pause({from: aliceAccount});
-            await Rem.kill({from: aliceAccount});
-            return expect(Rem.resume({from: aliceAccount})).to.be.rejected;
+            await remittance.pause({from: aliceAccount});
+            await remittance.kill({from: aliceAccount});
+            return expect(remittance.resume({from: aliceAccount})).to.be.rejected;
         });
 
         it("Should not be possible to empty a live contract", async function () {
-            return expect(Rem.emptyAccount(aliceAccount, {from: aliceAccount})).to.be.rejected;
+            return expect(remittance.emptyAccount(aliceAccount, {from: aliceAccount})).to.be.rejected;
         });
 
         it("Should be possible to empty a killed contract", async function () {
-            await Rem.pause({from: aliceAccount});
-            await Rem.kill({from: aliceAccount});
-            return expect(Rem.emptyAccount(aliceAccount, {from: aliceAccount})).to.be.fulfilled;
+            await remittance.pause({from: aliceAccount});
+            await remittance.kill({from: aliceAccount});
+            return expect(remittance.emptyAccount(aliceAccount, {from: aliceAccount})).to.be.fulfilled;
         });
     });
 
@@ -114,77 +137,76 @@ contract('Remittance', function(accounts) {
 
         it("Should not be possible to release the Remittance" +
             "without the right puzzle or right wrong account", async function () {
-            const wrongPuzzle = Rem.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
-            expect(Rem.releaseFunds(
+            const wrongPuzzle = remittance.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
+            expect(remittance.releaseFunds(
                 wrongPuzzle,
                 {from: converter}
             )).to.be.rejected;
-            return expect(Rem.releaseFunds(rPuzzle, {from: aliceAccount})).to.be.rejected;
+            return expect(remittance.releaseFunds(rPuzzle, {from: aliceAccount})).to.be.rejected;
         });
 
 
         it("Should be possible to release the remittance with the correct puzzle", async function () {
-            return expect(Rem.releaseFunds(rPuzzle, {from: converter})).to.be.fulfilled;
+            return expect(remittance.releaseFunds(rPuzzle, {from: converter})).to.be.fulfilled;
         });
 
         it("Should not be possible to release the Remittance after its been released", async function () {
-            Rem.releaseFunds(rPuzzle, {from: converter});
-            return expect(Rem.releaseFunds(rPuzzle, {from: converter})).to.be.rejected;
+            remittance.releaseFunds(rPuzzle, {from: converter});
+            return expect(remittance.releaseFunds(rPuzzle, {from: converter})).to.be.rejected;
         });
 
         it("Should send all the ether stored in the remittance to the converter after release", async function () {
 
             const originalBalance= await web3.eth.getBalance(converter);
 
-            const trx = await Rem.releaseFunds(rPuzzle, {from: converter});
+            const trx = await remittance.releaseFunds(rPuzzle, {from: converter});
             const trxTx = await web3.eth.getTransaction(trx.tx);
 
-            let gasUsed = new BN(trx.receipt.gasUsed);
+            const gasUsed = new BN(trx.receipt.gasUsed);
             const gasPrice = new BN(trxTx.gasPrice);
             const gasCost = gasPrice.mul(gasUsed);
 
-            const checkBalance = new BN(originalBalance).sub(gasCost);
-            const converterBalance = new BN(await web3.eth.getBalance(converter));
+            const expectedBalance = new BN(originalBalance).sub(gasCost).add(new BN(3000));
+            const actualBalance = new BN(await web3.eth.getBalance(converter));
 
-            return assert.strictEqual(converterBalance.sub(checkBalance).toString(), '3000');
+            return assert.strictEqual(actualBalance.toString(), expectedBalance.toString());
         });
 
         it("Should be possible for Alice to verify that the transaction went through", async function () {
 
-            let tx = await Rem.releaseFunds(
+            const tx = await remittance.releaseFunds(
                 rPuzzle, {from: converter}
             );
 
-            truffleAssert.eventEmitted(tx, 'logFundsReleased', (ev) => {
-                return ev.sender === converter && ev.amount.toString() === '3000'
+            truffleAssert.eventEmitted(tx, 'LogFundsReleased', (ev) => {
+                return ev.sender === aliceAccount && ev.converter === converter && ev.amount.toString() === '3000'
             });
         });
 
         it("Should be possible to verify that a remittance was reclaimed", async function () {
 
             await timeMachine.advanceTimeAndBlock(11);
-            let tx = await Rem.reclaimFunds(
+            const tx = await remittance.reclaimFunds(
                 converter, rPuzzle, {from: aliceAccount}
             );
 
-            truffleAssert.eventEmitted(tx, 'logFundsReclaimed', (ev) => {
+            truffleAssert.eventEmitted(tx, 'LogFundsReclaimed', (ev) => {
                 return ev.sender === aliceAccount && ev.amount.toString() === '3000'
             });
         });
 
         it("Should be possible to verify that a new remittance has been created", async function () {
-            Rem2 = await Remittance.new(false, remFee, {from: aliceAccount});
+            const newPuzzle = await remittance.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
+            const tx = await remittance.createRemittance(converter, newPuzzle, 10, {from: aliceAccount, value:5000});
 
-            tx = await Rem2.createRemittance(converter, puzzle, 10, {from: aliceAccount, value:5000});
-
-            truffleAssert.eventEmitted(tx, 'logNewRemittance', (ev) => {
+            truffleAssert.eventEmitted(tx, 'LogNewRemittance', (ev) => {
                 return ev.sender === aliceAccount && ev.converter === converter && ev.amount.toString() === '5000'
             });
         });
 
         it("Should be possible to create several remittances on the same contract", async function () {
-            const newPuzzle = await Rem.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
-            return expect(Rem.createRemittance(
+            const newPuzzle = await remittance.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
+            return expect(remittance.createRemittance(
                 converter,
                 newPuzzle,
                 10,
@@ -193,7 +215,7 @@ contract('Remittance', function(accounts) {
         });
 
         it("Should not be possible to create a remittance with the same puzzle", async function () {
-            return expect(Rem.createRemittance(
+            return expect(remittance.createRemittance(
                 converter,
                 puzzle,
                 10,
@@ -202,19 +224,19 @@ contract('Remittance', function(accounts) {
         });
 
         it("Should not have a balance after withdrawal", async function () {
-            await Rem.releaseFunds(rPuzzle, {from: converter});
-            remittances = await Rem.remittances(puzzle);
+            await remittance.releaseFunds(rPuzzle, {from: converter});
+            const remittances = await remittance.remittances(puzzle);
             return assert.strictEqual(remittances.amount.toString(), '0');
         });
 
         it("Should be possible for the owner to withdraw any collected fees", async function () {
-            puzzleSec = await Rem.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
-            await Rem.createRemittance(converter, puzzleSec, 10, {from: aliceAccount, value:5000});
+            puzzleSec = await remittance.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
+            await remittance.createRemittance(converter, puzzleSec, 10, {from: aliceAccount, value:5000});
 
             let aliceBalance = new BN(await web3.eth.getBalance(aliceAccount));
             const expectedBalance = aliceBalance.add(new BN(4000));
 
-            const trx = await Rem.withdrawFees({from: aliceAccount});
+            const trx = await remittance.withdrawFees({from: aliceAccount});
             const trxTx = await web3.eth.getTransaction(trx.tx);
 
             let gasUsed = new BN(trx.receipt.gasUsed);
@@ -234,9 +256,9 @@ contract('Remittance', function(accounts) {
 
         it("Should not be possible to withdraw after the deadline has passed", async function () {
             await timeMachine.advanceTimeAndBlock(11);
-            //return expect(Rem.releaseFunds(rPuzzle, {from: converter})).to.be.rejected;
+            //return expect(remittance.releaseFunds(rPuzzle, {from: converter})).to.be.rejected;
             return await truffleAssert.fails(
-                Rem.releaseFunds(rPuzzle, {from: converter}),
+                remittance.releaseFunds(rPuzzle, {from: converter}),
                 truffleAssert.ErrorType.REVERT,
                 "Remittance has lapsed"
             );
@@ -245,21 +267,21 @@ contract('Remittance', function(accounts) {
         it("Should be possible for the owner to reclaim the deposited ehter after \
         the deadline has expired", async function () {
             await timeMachine.advanceTimeAndBlock(11);
-            return expect(Rem.reclaimFunds(converter, rPuzzle, {from: aliceAccount})).to.be.fulfilled;
+            return expect(remittance.reclaimFunds(converter, rPuzzle, {from: aliceAccount})).to.be.fulfilled;
         });
 
         it("Should not be possible for the owner to reclaim the deposited ehter before \
         the deadline has expired", async function () {
-            //return expect(Rem.reclaimFunds(converter, rPuzzle, {from: aliceAccount})).to.be.rejected;
+            //return expect(remittance.reclaimFunds(converter, rPuzzle, {from: aliceAccount})).to.be.rejected;
             return await truffleAssert.fails(
-                Rem.reclaimFunds(converter, rPuzzle, {from: aliceAccount}),
+                remittance.reclaimFunds(converter, rPuzzle, {from: aliceAccount}),
                 truffleAssert.ErrorType.REVERT,
                 "Remittance needs to expire"
             );
         });
 
         it("Should be possible to withdraw within the given deadline", async function () {
-            return expect(Rem.releaseFunds(rPuzzle, {from: converter})).to.be.fulfilled;
+            return expect(remittance.releaseFunds(rPuzzle, {from: converter})).to.be.fulfilled;
         });
     });
 });
