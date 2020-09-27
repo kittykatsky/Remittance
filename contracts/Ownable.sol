@@ -25,7 +25,7 @@ contract Ownable {
     /// change contract owner
     /// @param newOwner - address of new owner
     /// @dev emits address of new owner 
-    function transferOwnership(address newOwner) public onlyOwner {
+    function transferOwnership(address newOwner) virtual public onlyOwner {
         require(newOwner != address(0x0));
         owner = newOwner;
         emit LogOwnershipChange(newOwner);

@@ -9,14 +9,14 @@ contract Remittance is Pausable {
 
     using SafeMath for uint;
 
-    // Remittance deadlince cant be more than 2 hours into the future
-    uint16 constant DEADLINE_LIMIT = 7200;
+    // Remittance deadline cant be more than 2 hours into the future
+    uint16 constant CUTOFF_LIMIT = 2 hours;
     // Remittance fee
     uint fee;
 
     // Struct to hold information about individual remittances
     struct remittanceStruct {
-        address payable from;
+        address from;
         uint amount;
         uint deadline;
     } 
@@ -27,34 +27,42 @@ contract Remittance is Pausable {
     // mapping that holds fees payed out to contract owner
     mapping(address => uint) private fees;
 
-    event logNewRemittance(address indexed sender, address indexed converter, uint amount, uint deadline);
-    event logFundsReleased(address indexed sender, uint amount, uint releasedAt);
-    event logFundsReclaimed(address indexed sender, uint amount, uint reclaimedAt);
+    event LogNewRemittance(address indexed sender, address indexed converter, uint amount, uint deadline);
+    event LogFundsReleased(address indexed sender, address indexed converter, uint amount);
+    event LogFundsReclaimed(address indexed sender, uint amount);
 
-    constructor (bool _pauseState, uint _fee) Pausable(_pauseState) public {fee = _fee;}
-
-    /// Generates a remittance
-    /// @param converter address of converter 
-    /// @param puzzle puzzle provided to unlock remittance
-    /// @param deadline deadline set for the remittance
-    function createRemittance(
-        address payable converter, 
-        bytes32 puzzle, 
-        uint deadline
-    )
-        external
-        payable
-        whenRunning
+    constructor (
+        bool _pauseState, 
+        uint _fee
+    ) 
+        Pausable(_pauseState) 
+        public 
     {
-        require(deadline <= DEADLINE_LIMIT, 'Deadline cant be more than two hours into future');
-        require(msg.value > fee, 'deposited amount need to be larger than fee');
-        require(remittances[puzzle].from == address(0x0), 'Secret already in use');
+        fee = _fee;
+    }
 
-        remittances[puzzle].from = msg.sender;
-        remittances[puzzle].amount = msg.value.sub(fee);
-        remittances[puzzle].deadline = block.timestamp + deadline; 
-        emit logNewRemittance(msg.sender, converter, msg.value, deadline);
-        fees[getOwner()] = fees[getOwner()].add(fee);
+    /// List fees collected by contract
+    /// @dev since the fees mapping is private the 
+    /// owner needs to be able to find out the amount of fees collected
+	/// @return amount the amount of fees collected
+    function listFees() external view onlyOwner returns (uint amount)
+    {
+        amount = fees[msg.sender];
+    }
+
+    /// Withdraw fees from created remittances
+    /// @dev allowd the owner to withdraw collected fees
+	/// @return success function succeeded 
+
+    function withdrawFees() external onlyOwner returns (bool success)
+    {
+        uint amount = fees[msg.sender];
+        require(amount > 0, 'No ether available');
+        fees[msg.sender] = 0;
+
+        (success, ) = msg.sender.call{value: amount}("");
+        require(success, 'Transfer failed!');
+        return true;
     }
 
     /// Generate a unique puzzle for this contract
@@ -68,9 +76,38 @@ contract Remittance is Pausable {
         view
         returns (bytes32 puzzle)
     {
-        puzzle = keccak256(abi.encode(converterAddress, puzzlePiece, address(this)));
+        require(converterAddress != address(0x0), 'address needs to be specified');
+        puzzle = keccak256(abi.encodePacked(converterAddress, puzzlePiece, address(this)));
     }
-        
+
+    /// Generates a remittance
+    /// @param converter address of converter 
+    /// @param puzzle puzzle provided to unlock remittance
+    /// @param cutOff point set for the remittance after which it
+    /// is no longer valid
+    function createRemittance(
+        address payable converter, 
+        bytes32 puzzle, 
+        uint cutOff
+    )
+        external
+        payable
+        whenRunning
+    {
+        require(cutOff <= CUTOFF_LIMIT, 'deadline cant be more than two hours into future');
+        require(remittances[puzzle].from == address(0x0), 'Secret already in use');
+
+        uint deadline = block.timestamp.add(cutOff); 
+
+        remittances[puzzle].from = msg.sender;
+        remittances[puzzle].amount = msg.value.sub(fee);
+        remittances[puzzle].deadline = deadline;
+        emit LogNewRemittance(msg.sender, converter, msg.value, deadline);
+
+        uint newFee = fees[getOwner()] + fee;
+        fees[getOwner()] = newFee;
+    }
+
     /// Release the remittance
     /// @param puzzlePiece used to unlock remittance
     /// @dev allows converter to withdraw the alloted funds
@@ -81,13 +118,13 @@ contract Remittance is Pausable {
         returns (bool success)
     {
         bytes32 puzzle = generatePuzzle(msg.sender, puzzlePiece);
-        (uint amount, uint deadline, ) = retrieveRemInfo(puzzle);
+        (uint amount, uint deadline, address from) = retrieveRemInfo(puzzle);
         require(block.timestamp <= deadline, 'Remittance has lapsed');
         require(amount > 0, 'Remittance is empty');
 
         remittances[puzzle].amount = 0;
         remittances[puzzle].deadline = 0;
-        emit logFundsReleased(msg.sender, amount, block.timestamp);
+        emit LogFundsReleased(from, msg.sender, amount);
 
         (success, ) = msg.sender.call{value: amount}("");
         require(success, 'Transfer failed!');
@@ -104,18 +141,34 @@ contract Remittance is Pausable {
         returns (bool success)
     {
         bytes32 puzzle = generatePuzzle(converterAddress, puzzlePiece);
-        (uint amount, uint deadline, address payable from) = retrieveRemInfo(puzzle);
+        (uint amount, uint deadline, address from) = retrieveRemInfo(puzzle);
         require(msg.sender == from, 'Only sender can reclaim funds');
         require(amount > 0, 'Remittance is empty');
-        require(block.timestamp >= deadline, 'Remittance needs to expire');
+        require(block.timestamp > deadline, 'Remittance needs to expire');
 
         remittances[puzzle].amount = 0;
         remittances[puzzle].deadline = 0;
-        emit logFundsReclaimed(msg.sender, amount, block.timestamp);
+        emit LogFundsReclaimed(msg.sender, amount);
 
         (success, ) = msg.sender.call{value: amount}("");
         require(success, 'Transfer failed!');
         return true;
+    }
+
+    /// change contract owner
+    /// @param newOwner - address of new owner
+    /// @dev additional logic for releasing leftover fees 
+    /// if owner forgot to claim them before assinging new owner
+    function transferOwnership(address newOwner) override public onlyOwner {
+        uint leftOverFees = fees[msg.sender];
+        if (leftOverFees > 0)
+        {
+            fees[msg.sender] = 0;
+            (bool success, ) = msg.sender.call{value: leftOverFees}("");
+            require(success, 'Remaining fee transfer failed');
+        }
+        super.transferOwnership(newOwner);
+
     }
 
     /// Return Remittance struct data
@@ -126,26 +179,11 @@ contract Remittance is Pausable {
 	/// @return from remittance created
     function retrieveRemInfo(bytes32 puzzle) 
         private 
-        returns(uint amount, uint deadline, address payable from)
+        returns(uint amount, uint deadline, address from)
     {
         amount = remittances[puzzle].amount;
         from = remittances[puzzle].from;
         deadline = remittances[puzzle].deadline;
-
-        return (amount, deadline, from);
     }
-
-    /// Withdraw fees from created remittances
-    /// @dev allowd the owner to withdraw collected fees
-	/// @return success function succeeded 
-    function withdrawFees() public onlyOwner returns (bool success)
-    {
-        uint amount = fees[msg.sender];
-        require(amount > 0, 'No ether available');
-        fees[msg.sender] = 0;
-
-        (success, ) = msg.sender.call{value: amount}("");
-        require(success, 'Transfer failed!');
-        return true;
-    }
+    
 }
