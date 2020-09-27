@@ -99,13 +99,16 @@ contract Remittance is Pausable {
 
         uint deadline = block.timestamp.add(cutOff); 
 
-        remittances[puzzle].from = msg.sender;
-        remittances[puzzle].amount = msg.value.sub(fee);
-        remittances[puzzle].deadline = deadline;
+        remittances[puzzle] = remittanceStruct({
+            from:msg.sender, 
+            amount:msg.value.sub(fee),
+            deadline:deadline    
+        });
         emit LogNewRemittance(msg.sender, converter, msg.value, deadline);
 
-        uint newFee = fees[getOwner()] + fee;
-        fees[getOwner()] = newFee;
+        address contractOwner = getOwner();
+        uint newFee = fees[contractOwner].add(fee);
+        fees[contractOwner] = newFee;
     }
 
     /// Release the remittance
