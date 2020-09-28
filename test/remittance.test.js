@@ -21,9 +21,7 @@ require("dotenv").config({path: "./.env"});
 
 contract('Remittance', function(accounts) {
 
-    let remittance;
-    let puzzle;
-    let trx;
+    let remittance, puzzle, trx, snapshotId;
     const [aliceAccount, bobAccount, carolAccount] = accounts;
 
     const converter = carolAccount;
@@ -34,11 +32,11 @@ contract('Remittance', function(accounts) {
 
 
     beforeEach('Setup new Remittance before each test', async function () {
-        let snapshot = await timeMachine.takeSnapshot();
+        const snapshot = await timeMachine.takeSnapshot();
         snapshotId = snapshot['result'];
         remittance = await Remittance.new(false, remFee, {from: aliceAccount});
         puzzle = await remittance.generatePuzzle(converter, rPuzzle, {from: aliceAccount})
-        trx = await remittance.createRemittance(converter, puzzle, 10, {from: aliceAccount, value:5000});
+        trx = await remittance.createRemittance(puzzle, 10, {from: aliceAccount, value:5000});
     });
 
     afterEach(async() => {
@@ -55,8 +53,7 @@ contract('Remittance', function(accounts) {
         amount and deadline", async function () {
             remittances = await remittance.remittances(puzzle);
 
-            const trxTx = await web3.eth.getTransaction(trx.tx);
-            const block = await web3.eth.getBlock(trxTx.blockNumber);
+            const block = await web3.eth.getBlock(trx.receipt.blockNumber);
             const setDeadline = block.timestamp + 10;
             assert.strictEqual(remittances.from, aliceAccount);
             assert.strictEqual(remittances.deadline.toString(), setDeadline.toString());
@@ -78,9 +75,11 @@ contract('Remittance', function(accounts) {
             );
         });
 
-        it("Should be possible for the old owner to get back their fees when chaning owner", async function () {
-            const originalBalance= await web3.eth.getBalance(aliceAccount);
-            const trx = await remittance.transferOwnership(bobAccount, {from: aliceAccount});
+        it("Should be possible for the old owner to get back their fees when changing owner", async function () {
+            await remittance.transferOwnership(bobAccount, {from: aliceAccount});
+
+            const originalBalance = await web3.eth.getBalance(aliceAccount);
+            const trx = await remittance.withdrawFees({from: aliceAccount});
             const trxTx = await web3.eth.getTransaction(trx.tx);
 
             const gasUsed = new BN(trx.receipt.gasUsed);
@@ -187,7 +186,7 @@ contract('Remittance', function(accounts) {
 
             await timeMachine.advanceTimeAndBlock(11);
             const tx = await remittance.reclaimFunds(
-                converter, rPuzzle, {from: aliceAccount}
+                puzzle, {from: aliceAccount}
             );
 
             truffleAssert.eventEmitted(tx, 'LogFundsReclaimed', (ev) => {
@@ -197,17 +196,16 @@ contract('Remittance', function(accounts) {
 
         it("Should be possible to verify that a new remittance has been created", async function () {
             const newPuzzle = await remittance.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
-            const tx = await remittance.createRemittance(converter, newPuzzle, 10, {from: aliceAccount, value:5000});
+            const trx = await remittance.createRemittance(newPuzzle, 10, {from: aliceAccount, value:5000});
 
-            truffleAssert.eventEmitted(tx, 'LogNewRemittance', (ev) => {
-                return ev.sender === aliceAccount && ev.converter === converter && ev.amount.toString() === '5000'
+            truffleAssert.eventEmitted(trx, 'LogNewRemittance', (ev) => {
+                return ev.sender === aliceAccount && ev.puzzle === newPuzzle && ev.amount.toString() === '3000'
             });
         });
 
         it("Should be possible to create several remittances on the same contract", async function () {
             const newPuzzle = await remittance.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
             return expect(remittance.createRemittance(
-                converter,
                 newPuzzle,
                 10,
                 {from: aliceAccount, value:3000}
@@ -216,7 +214,6 @@ contract('Remittance', function(accounts) {
 
         it("Should not be possible to create a remittance with the same puzzle", async function () {
             return expect(remittance.createRemittance(
-                converter,
                 puzzle,
                 10,
                 {from: aliceAccount, value:3000}
@@ -230,11 +227,10 @@ contract('Remittance', function(accounts) {
         });
 
         it("Should be possible for the owner to withdraw any collected fees", async function () {
-            puzzleSec = await remittance.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
-            await remittance.createRemittance(converter, puzzleSec, 10, {from: aliceAccount, value:5000});
+            const puzzleSec = await remittance.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
+            await remittance.createRemittance(puzzleSec, 10, {from: aliceAccount, value:5000});
 
-            let aliceBalance = new BN(await web3.eth.getBalance(aliceAccount));
-            const expectedBalance = aliceBalance.add(new BN(4000));
+            const expectedBalance = new BN(await web3.eth.getBalance(aliceAccount)).add(new BN(4000));
 
             const trx = await remittance.withdrawFees({from: aliceAccount});
             const trxTx = await web3.eth.getTransaction(trx.tx);
@@ -243,7 +239,7 @@ contract('Remittance', function(accounts) {
             const gasPrice = new BN(trxTx.gasPrice);
             const gasCost = gasPrice.mul(gasUsed);
 
-            aliceBalance = new BN(await web3.eth.getBalance(aliceAccount)).add(gasCost);
+            const aliceBalance = new BN(await web3.eth.getBalance(aliceAccount)).add(gasCost);
 
             return assert.strictEqual(aliceBalance.toString(), expectedBalance.toString());
         });
@@ -264,17 +260,31 @@ contract('Remittance', function(accounts) {
             );
         });
 
-        it("Should be possible for the owner to reclaim the deposited ehter after \
+        it("Should be possible for the sender to reclaim the deposited ehter after \
         the deadline has expired", async function () {
             await timeMachine.advanceTimeAndBlock(11);
-            return expect(remittance.reclaimFunds(converter, rPuzzle, {from: aliceAccount})).to.be.fulfilled;
+            return expect(remittance.reclaimFunds(puzzle, {from: aliceAccount})).to.be.fulfilled;
+        });
+
+        it("Should send the reclaimed ether to the senders account", async function () {
+            await timeMachine.advanceTimeAndBlock(11);
+            const expectedBalance = new BN(await web3.eth.getBalance(aliceAccount)).add(new BN(3000));
+
+            const trx = await remittance.reclaimFunds(puzzle, {from: aliceAccount});
+            const trxTx = await web3.eth.getTransaction(trx.tx);
+
+            let gasUsed = new BN(trx.receipt.gasUsed);
+            const gasPrice = new BN(trxTx.gasPrice);
+            const gasCost = gasPrice.mul(gasUsed);
+
+            const aliceBalance = new BN(await web3.eth.getBalance(aliceAccount)).add(gasCost);
+            return assert.strictEqual(aliceBalance.toString(), expectedBalance.toString());
         });
 
         it("Should not be possible for the owner to reclaim the deposited ehter before \
         the deadline has expired", async function () {
-            //return expect(remittance.reclaimFunds(converter, rPuzzle, {from: aliceAccount})).to.be.rejected;
             return await truffleAssert.fails(
-                remittance.reclaimFunds(converter, rPuzzle, {from: aliceAccount}),
+                remittance.reclaimFunds(puzzle, {from: aliceAccount}),
                 truffleAssert.ErrorType.REVERT,
                 "Remittance needs to expire"
             );
