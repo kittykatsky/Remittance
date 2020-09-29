@@ -28,7 +28,7 @@ contract Remittance is Pausable {
     mapping(address => uint) private fees;
 
     event LogNewRemittance(address indexed sender, bytes32 puzzle, uint amount, uint deadline);
-    event LogFundsReleased(address indexed sender, address indexed converter, uint amount);
+    event LogFundsReleased(address indexed converter, bytes32 puzzle, uint amount);
     event LogFundsReclaimed(address indexed sender, uint amount);
 
     constructor (
@@ -121,14 +121,13 @@ contract Remittance is Pausable {
         bytes32 puzzle = generatePuzzle(msg.sender, puzzlePiece);
         uint amount = remittances[puzzle].amount;
         uint deadline = remittances[puzzle].deadline;
-        address from = remittances[puzzle].from;
 
         require(block.timestamp <= deadline, 'Remittance has lapsed');
         require(amount > 0, 'Remittance is empty');
 
         remittances[puzzle].amount = 0;
         remittances[puzzle].deadline = 0;
-        emit LogFundsReleased(from, msg.sender, amount);
+        emit LogFundsReleased(msg.sender, puzzle, amount);
 
         (success, ) = msg.sender.call{value: amount}("");
         require(success, 'Transfer failed!');

@@ -178,7 +178,7 @@ contract('Remittance', function(accounts) {
             );
 
             truffleAssert.eventEmitted(tx, 'LogFundsReleased', (ev) => {
-                return ev.sender === aliceAccount && ev.converter === converter && ev.amount.toString() === '3000'
+                return ev.converter === converter && ev.puzzle === puzzle && ev.amount.toString() === '3000'
             });
         });
 
