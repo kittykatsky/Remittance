@@ -27,9 +27,10 @@ contract Remittance is Pausable {
     // mapping that holds fees payed out to contract owner
     mapping(address => uint) private fees;
 
-    event LogNewRemittance(address indexed sender, bytes32 puzzle, uint amount, uint deadline);
-    event LogFundsReleased(address indexed converter, bytes32 puzzle, uint amount);
-    event LogFundsReclaimed(address indexed sender, uint amount);
+    event LogNewRemittance(address indexed sender, bytes32 indexed puzzle, uint amount, uint deadline);
+    event LogFundsReleased(address indexed converter, bytes32 indexed puzzle, uint amount);
+    event LogFundsReclaimed(address indexed sender, bytes32 indexed puzzle, uint amount);
+    event LogFeesRetrieved(address indexed sender, uint amount);
 
     constructor (
         bool _pauseState, 
@@ -60,6 +61,7 @@ contract Remittance is Pausable {
         require(amount > 0, 'No ether available');
         fees[msg.sender] = 0;
 
+        emit LogFeesRetrieved(msg.sender, amount);
         (success, ) = msg.sender.call{value: amount}("");
         require(success, 'Transfer failed!');
     }
@@ -120,9 +122,8 @@ contract Remittance is Pausable {
     {
         bytes32 puzzle = generatePuzzle(msg.sender, puzzlePiece);
         uint amount = remittances[puzzle].amount;
-        uint deadline = remittances[puzzle].deadline;
 
-        require(block.timestamp <= deadline, 'Remittance has lapsed');
+        require(block.timestamp <= remittances[puzzle].deadline, 'Remittance has lapsed');
         require(amount > 0, 'Remittance is empty');
 
         remittances[puzzle].amount = 0;
@@ -131,10 +132,9 @@ contract Remittance is Pausable {
 
         (success, ) = msg.sender.call{value: amount}("");
         require(success, 'Transfer failed!');
-        return true;
     } 
 
-    /// Reclaim funds from expired remittance
+    /// reclaim funds from expired remittance
     /// @param puzzle used to unlock remittance
     /// @dev allows sender to withdraw their sent funds
 	/// @return success true if succesfull
@@ -143,19 +143,16 @@ contract Remittance is Pausable {
         returns (bool success)
     {
         uint amount = remittances[puzzle].amount;
-        uint deadline = remittances[puzzle].deadline;
-        address from = remittances[puzzle].from;
 
-        require(msg.sender == from, 'Only sender can reclaim funds');
+        require(msg.sender == remittances[puzzle].from, 'Only sender can reclaim funds');
         require(amount > 0, 'Remittance is empty');
-        require(block.timestamp > deadline, 'Remittance needs to expire');
+        require(block.timestamp > remittances[puzzle].deadline, 'Remittance needs to expire');
 
         remittances[puzzle].amount = 0;
         remittances[puzzle].deadline = 0;
-        emit LogFundsReclaimed(msg.sender, amount);
+        emit LogFundsReclaimed(msg.sender, puzzle, amount);
 
         (success, ) = msg.sender.call{value: amount}("");
         require(success, 'Transfer failed!');
-        return true;
     }
 }

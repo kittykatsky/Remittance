@@ -8,7 +8,7 @@
  *
  * */
 
-const { BN, fromAscii } = web3.utils;
+const { BN, toBN, fromAscii } = web3.utils;
 const chai = require('chai');
 var chaiAsPromised = require("chai-as-promised");
 chai.use(chaiAsPromised);
@@ -32,8 +32,7 @@ contract('Remittance', function(accounts) {
 
 
     beforeEach('Setup new Remittance before each test', async function () {
-        const snapshot = await timeMachine.takeSnapshot();
-        snapshotId = snapshot['result'];
+        snapshotId = (await timeMachine.takeSnapshot())['result'];
         remittance = await Remittance.new(false, remFee, {from: aliceAccount});
         puzzle = await remittance.generatePuzzle(converter, rPuzzle, {from: aliceAccount})
         trx = await remittance.createRemittance(puzzle, 10, {from: aliceAccount, value:5000});
@@ -190,7 +189,7 @@ contract('Remittance', function(accounts) {
             );
 
             truffleAssert.eventEmitted(tx, 'LogFundsReclaimed', (ev) => {
-                return ev.sender === aliceAccount && ev.amount.toString() === '3000'
+                return ev.sender === aliceAccount && ev.puzzle === puzzle && ev.amount.toString() === '3000'
             });
         });
 
@@ -202,6 +201,15 @@ contract('Remittance', function(accounts) {
                 return ev.sender === aliceAccount && ev.puzzle === newPuzzle && ev.amount.toString() === '3000'
             });
         });
+
+        it("Should be possible to verify that fees have been withdrawn", async function () {
+            const trx = await remittance.withdrawFees({from: aliceAccount});
+
+            truffleAssert.eventEmitted(trx, 'LogFeesRetrieved', (ev) => {
+                return ev.sender === aliceAccount && ev.amount.toString() === '2000'
+            });
+        });
+
 
         it("Should be possible to create several remittances on the same contract", async function () {
             const newPuzzle = await remittance.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
@@ -230,16 +238,16 @@ contract('Remittance', function(accounts) {
             const puzzleSec = await remittance.generatePuzzle(converter, rPuzzleSec, {from: aliceAccount})
             await remittance.createRemittance(puzzleSec, 10, {from: aliceAccount, value:5000});
 
-            const expectedBalance = new BN(await web3.eth.getBalance(aliceAccount)).add(new BN(4000));
+            const expectedBalance = toBN(await web3.eth.getBalance(aliceAccount)).add(new BN(4000));
 
             const trx = await remittance.withdrawFees({from: aliceAccount});
             const trxTx = await web3.eth.getTransaction(trx.tx);
 
-            let gasUsed = new BN(trx.receipt.gasUsed);
+            const gasUsed = new BN(trx.receipt.gasUsed);
             const gasPrice = new BN(trxTx.gasPrice);
             const gasCost = gasPrice.mul(gasUsed);
 
-            const aliceBalance = new BN(await web3.eth.getBalance(aliceAccount)).add(gasCost);
+            const aliceBalance = toBN(await web3.eth.getBalance(aliceAccount)).add(gasCost);
 
             return assert.strictEqual(aliceBalance.toString(), expectedBalance.toString());
         });
@@ -273,7 +281,7 @@ contract('Remittance', function(accounts) {
             const trx = await remittance.reclaimFunds(puzzle, {from: aliceAccount});
             const trxTx = await web3.eth.getTransaction(trx.tx);
 
-            let gasUsed = new BN(trx.receipt.gasUsed);
+            const gasUsed = new BN(trx.receipt.gasUsed);
             const gasPrice = new BN(trxTx.gasPrice);
             const gasCost = gasPrice.mul(gasUsed);
 
